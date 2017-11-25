@@ -7,8 +7,9 @@
 #include <errno.h>
 #include <string.h>
 
-#define N 4 //buffer size
+#define N 8 //buffer size
 #define MAX_LABEL_LENGTH 3
+#define ALPHABET_LENGTH 26
 #define TEST_STEPS 12
 
 
@@ -21,19 +22,25 @@ typedef struct {
     Element buffer[N]; //buffer of N elements
     sem_t empty, full, mutex; //unnamed semaphores
     int head, tail; //relative pointers
-    int count; //test purpose
+    int count; //number of filled elements in buffer
 } Buffer;
 
 void producer1Task(Buffer *buffer) {
     for(;;) {
+      int size, i;
         sem_wait(&(buffer->empty));
         sem_wait(&(buffer->mutex));
 
-            sprintf(buffer->buffer[buffer->tail].label,"%d",rand() % 10);
-            buffer->buffer[buffer->tail].lastReadBy = 0;
-            ++buffer->count;
-            printf("PRODUCE: [%d] %s\n",buffer->count, buffer->buffer[buffer->tail].label);
-            buffer->tail = (buffer->tail + 1) % N;
+          size = rand() % (MAX_LABEL_LENGTH);
+          size += 1;//Avoid 0 length
+          for(i = 0; i < size; ++i) {
+            buffer->buffer[buffer->tail].label[i] = 'a' + (rand() % ALPHABET_LENGTH);
+          }
+          buffer->buffer[buffer->tail].lastReadBy = 0;
+          ++buffer->count;
+            printf("Producer1:\t%s\t[%d]\n", buffer->buffer[buffer->tail].label,
+              buffer->count);
+          buffer->tail = (buffer->tail + 1) % N;
 
         sem_post(&(buffer->mutex));
         sem_post(&(buffer->full));
@@ -52,14 +59,17 @@ void consumer1Task(Buffer *buffer) {
         sem_wait(&(buffer->full));
         sem_wait(&(buffer->mutex));
 
-        if(buffer->buffer[buffer->head].lastReadBy == (id-1)) { //Read label and delete element from buffer
-            printf("CONSUMER%d: [%d] %s\n", id, buffer->count, buffer->buffer[buffer->head].label);
+        if(buffer->buffer[buffer->head].lastReadBy == (id-1) ||
+              buffer->buffer[buffer->head].lastReadBy == id-1) { //Read label
+
+            printf("Consumer%d:\tread: %s\t[%d]\n", id, buffer->buffer[buffer->head].label,
+              buffer->count);
             buffer->buffer[buffer->head].lastReadBy = id;
         }
 
         sem_post(&(buffer->mutex));
         sem_post(&(buffer->full));
-        sleep(1);
+        sleep(2);
     }
 }
 
@@ -71,8 +81,11 @@ void consumer2Task(Buffer *buffer) {
         sem_wait(&(buffer->full));
         sem_wait(&(buffer->mutex));
 
-        if(buffer->buffer[buffer->head].lastReadBy == (id-1)) { //Read label and delete element from buffer
-            printf("CONSUMER%d: [%d] %s\n", id, buffer->count, buffer->buffer[buffer->head].label);
+        if(buffer->buffer[buffer->head].lastReadBy == (id-1) ||
+              buffer->buffer[buffer->head].lastReadBy == id-1) { //Read label
+
+            printf("Consumer%d:\tread: %s\t[%d]\n", id, buffer->buffer[buffer->head].label,
+              buffer->count);
             buffer->buffer[buffer->head].lastReadBy = id;
         }
 
@@ -90,10 +103,11 @@ void consumer3Task(Buffer *buffer) {
         sem_wait(&(buffer->full));
         sem_wait(&(buffer->mutex));
 
-        if(buffer->buffer[buffer->head].lastReadBy == (id-1)) { //Read label and delete element from buffer
-            printf("CONSUMER%d: [%d] %s DELETED\n", id, buffer->count, buffer->buffer[buffer->head].label);
-            buffer->head = (buffer->head + 1) % N;
+        if(buffer->buffer[buffer->head].lastReadBy == (id-1) && buffer->count > 4) { //Read label and delete element from buffer
             --buffer->count;
+            printf("Consumer%d:\tread and remove: %s\t[%d]\n", id,
+              buffer->buffer[buffer->head].label, buffer->count);
+            buffer->head = (buffer->head + 1) % N;
 
             sem_post(&(buffer->mutex));
             sem_post(&(buffer->empty));
@@ -173,11 +187,7 @@ int main(int argc, char** argv)
 
                 }
             }
-
         }
-
     }
-
-
 
 }
