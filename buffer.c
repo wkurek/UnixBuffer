@@ -23,6 +23,7 @@ typedef struct {
     Element buffer[N]; //buffer of N elements
     sem_t empty, full, mutex; //unnamed semaphores
     sem_t empty_size;
+    sem_t consumer1, consumer2, consumer3; //consumer sync semaphores
     int head, tail; //relative pointers
     int count; //number of filled elements in buffer
 } Buffer;
@@ -55,8 +56,12 @@ void producer1Task(Buffer *buffer) {
             buffer->count);
         buffer->tail = (buffer->tail + 1) % N;
         sem_post(&(buffer->full));
+
+	if(buffer->count == 1) sem_post(&(buffer->consumer1));
       }
       sem_post(&(buffer->mutex));
+      sem_post(&(buffer->consumer3));
+
       sleep(2);
     }
 }
@@ -89,8 +94,12 @@ void producer2Task(Buffer *buffer) {
             buffer->count);
         buffer->tail = (buffer->tail + 1) % N;
         sem_post(&(buffer->full));
+
+	if(buffer->count == 1) sem_post(&(buffer->consumer1));
       }
       sem_post(&(buffer->mutex));
+      sem_post(&(buffer->consumer3));
+
       sleep(1);
     }
 }
@@ -103,13 +112,21 @@ void consumer1Task(Buffer *buffer) {
         sem_wait(&(buffer->full));
         sem_wait(&(buffer->mutex));
 
-        if(buffer->buffer[buffer->head].lastReadBy == (id-1) ||
-              buffer->buffer[buffer->head].lastReadBy == id) { //Read label
-
-            printf("Consumer%d:\tread: %c\t[%d]\n", id, buffer->buffer[buffer->head].label,
-              buffer->count);
-            buffer->buffer[buffer->head].lastReadBy = id;
+        while(buffer->buffer[buffer->head].lastReadBy != (id-1) &&
+              buffer->buffer[buffer->head].lastReadBy != id) { //Wait
+		
+		sem_post(&(buffer->mutex));
+        	sem_post(&(buffer->full));
+		sem_wait(&(buffer->consumer1));//Wait until new element will be avaliable as head
+		sem_wait(&(buffer->full));
+        	sem_wait(&(buffer->mutex));
         }
+
+	  printf("Consumer%d:\tread: %c\t[%d]\n", id, buffer->buffer[buffer->head].label,
+                buffer->count);
+
+          if(buffer->buffer[buffer->head].lastReadBy != id) sem_post(&(buffer->consumer2));
+          buffer->buffer[buffer->head].lastReadBy = id;
 
         sem_post(&(buffer->mutex));
         sem_post(&(buffer->full));
@@ -121,17 +138,25 @@ void consumer2Task(Buffer *buffer) {
     unsigned int id;
     id = 2;
 
-    for(;;) {
+      for(;;) {
         sem_wait(&(buffer->full));
         sem_wait(&(buffer->mutex));
 
-        if(buffer->buffer[buffer->head].lastReadBy == (id-1) ||
-              buffer->buffer[buffer->head].lastReadBy == id-1) { //Read label
-
-            printf("Consumer%d:\tread: %c\t[%d]\n", id, buffer->buffer[buffer->head].label,
-              buffer->count);
-            buffer->buffer[buffer->head].lastReadBy = id;
+        while(buffer->buffer[buffer->head].lastReadBy != (id-1) &&
+              buffer->buffer[buffer->head].lastReadBy != id) { //Wait
+		
+		sem_post(&(buffer->mutex));
+        	sem_post(&(buffer->full));
+		sem_wait(&(buffer->consumer2));//Wait until new element will be avaliable as head
+		sem_wait(&(buffer->full));
+        	sem_wait(&(buffer->mutex));
         }
+
+	  printf("Consumer%d:\tread: %c\t[%d]\n", id, buffer->buffer[buffer->head].label,
+                buffer->count);
+
+          if(buffer->buffer[buffer->head].lastReadBy != id) sem_post(&(buffer->consumer3));
+	  buffer->buffer[buffer->head].lastReadBy = id;
 
         sem_post(&(buffer->mutex));
         sem_post(&(buffer->full));
@@ -147,19 +172,25 @@ void consumer3Task(Buffer *buffer) {
         sem_wait(&(buffer->full));
         sem_wait(&(buffer->mutex));
 
-        if(buffer->buffer[buffer->head].lastReadBy == (id-1) && buffer->count > 4) { //Read label and delete element from buffer
-            --buffer->count;
-            printf("Consumer%d:\tread and remove: %c\t[%d]\n", id,
-              buffer->buffer[buffer->head].label, buffer->count);
-            buffer->head = (buffer->head + 1) % N;
-
-            sem_post(&(buffer->mutex));
-            sem_post(&(buffer->empty));
-            sem_post(&(buffer->empty_size));
-        } else {
+        while(buffer->buffer[buffer->head].lastReadBy != (id-1) || buffer->count <= 4) { 
             sem_post(&(buffer->mutex));
             sem_post(&(buffer->full));
+	    sem_wait(&(buffer->consumer3));    
+	    sem_wait(&(buffer->full));
+            sem_wait(&(buffer->mutex));
         }
+
+	--buffer->count;
+        printf("Consumer%d:\tread and remove: %c\t[%d]\n", id,
+                buffer->buffer[buffer->head].label, buffer->count);
+        buffer->head = (buffer->head + 1) % N;
+
+	if(buffer->count > 0) sem_post(&(buffer->consumer1));//Do not wake consumer1 when buffer is empty
+	
+	sem_post(&(buffer->mutex));
+        sem_post(&(buffer->empty));
+        sem_post(&(buffer->empty_size));
+
         sleep(2);
     }
 }
@@ -209,6 +240,19 @@ int main(int argc, char** argv)
         printf("Error while initializing semaphore: %d\n", errno);
         exit(-1);
     }
+    if((sem_init(&(buffer->consumer1), 1, 0)) == -1){
+        printf("Error while initializing semaphore: %d\n", errno);
+        exit(-1);
+    }
+    if((sem_init(&(buffer->consumer2), 1, 0)) == -1){
+        printf("Error while initializing semaphore: %d\n", errno);
+        exit(-1);
+    }
+    if((sem_init(&(buffer->consumer3), 1, 0)) == -1){
+        printf("Error while initializing semaphore: %d\n", errno);
+        exit(-1);
+    }
+
 
 
     //Create 2 producers and 3 consumers
