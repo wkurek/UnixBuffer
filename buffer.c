@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
-#include <time.h>
+
 
 #define N 8 //buffer size
 #define MAX_PRODUCTION_SIZE 3
@@ -22,33 +22,30 @@ typedef struct {
 typedef struct {
     Element buffer[N]; //buffer of N elements
     sem_t empty, full, mutex; //unnamed semaphores
-    sem_t production, empty_size;
+    sem_t empty_size;
     int head, tail; //relative pointers
     int count; //number of filled elements in buffer
 } Buffer;
 
 void producer1Task(Buffer *buffer) {
     for(;;) {
-      int size, *empty_size, i;
+      int size, i;
 
       srand(17);
 
-      sem_wait(&(buffer->production));
+      sem_wait(&(buffer->mutex));
       size = rand() % (MAX_PRODUCTION_SIZE);
       size += 1;//Avoid 0 size
 
-      sem_getvalue(&(buffer->empty), empty_size);
-      printf("Producer1 wants to produce %d elements - free space = %d\n", size, *empty_size);
+      printf("Producer1 wants to produce %d elements - free space = %d\n", size, (N - buffer->count));
 
-      while(sem_getvalue(&(buffer->empty), empty_size) == 0 && *empty_size < size) {
-        sem_post(&(buffer->production));
+      while((N - buffer->count) < size) {
+        sem_post(&(buffer->mutex));
         sem_wait(&(buffer->empty_size));
-        sem_getvalue(&(buffer->empty), empty_size);
-        printf("Producer1 wants to produce %d elements - free space = %d\n", size, *empty_size);
-        sem_wait(&(buffer->production));
+        printf("Producer1 wants to produce %d elements - free space = %d\n", size, (N - buffer->count));
+        sem_wait(&(buffer->mutex));
       }
 
-      sem_wait(&(buffer->mutex));
       for(i = 0; i < size; ++i) {
         sem_wait(&(buffer->empty));
         buffer->buffer[buffer->tail].label = 'a' + (rand() % ALPHABET_LENGTH);
@@ -60,47 +57,42 @@ void producer1Task(Buffer *buffer) {
         sem_post(&(buffer->full));
       }
       sem_post(&(buffer->mutex));
-      sem_post(&(buffer->production));
       sleep(2);
     }
 }
 
 void producer2Task(Buffer *buffer) {
   for(;;) {
-    int size, *empty_size, i;
+      int size, i;
 
-    srand(43);
+      srand(34);
 
-    sem_wait(&(buffer->production));
-    size = rand() % (MAX_PRODUCTION_SIZE);
-    size += 1;//Avoid 0 size
+      sem_wait(&(buffer->mutex));
+      size = rand() % (MAX_PRODUCTION_SIZE);
+      size += 1;//Avoid 0 size
 
-    sem_getvalue(&(buffer->empty), empty_size);
-    printf("Producer2 wants to produce %d elements - free space = %d\n", size, *empty_size);
+      printf("Producer2 wants to produce %d elements - free space = %d\n", size, (N - buffer->count));
 
-    while(sem_getvalue(&(buffer->empty), empty_size) == 0 && *empty_size < size) {
-      sem_post(&(buffer->production));
-      sem_wait(&(buffer->empty_size));
-      sem_getvalue(&(buffer->empty), empty_size);
-      printf("Producer2 wants to produce %d elements - free space = %d\n", size, *empty_size);
-      sem_wait(&(buffer->production));
+      while((N - buffer->count) < size) {
+        sem_post(&(buffer->mutex));
+        sem_wait(&(buffer->empty_size));
+        printf("Producer2 wants to produce %d elements - free space = %d\n", size, (N - buffer->count));
+        sem_wait(&(buffer->mutex));
+      }
+
+      for(i = 0; i < size; ++i) {
+        sem_wait(&(buffer->empty));
+        buffer->buffer[buffer->tail].label = 'a' + (rand() % ALPHABET_LENGTH);
+        buffer->buffer[buffer->tail].lastReadBy = 0;
+        ++buffer->count;
+          printf("Producer2:\t%c\t[%d]\n", buffer->buffer[buffer->tail].label,
+            buffer->count);
+        buffer->tail = (buffer->tail + 1) % N;
+        sem_post(&(buffer->full));
+      }
+      sem_post(&(buffer->mutex));
+      sleep(1);
     }
-
-    sem_wait(&(buffer->mutex));
-    for(i = 0; i < size; ++i) {
-      sem_wait(&(buffer->empty));
-      buffer->buffer[buffer->tail].label = 'a' + (rand() % ALPHABET_LENGTH);
-      buffer->buffer[buffer->tail].lastReadBy = 0;
-      ++buffer->count;
-        printf("Producer2:\t%c\t[%d]\n", buffer->buffer[buffer->tail].label,
-          buffer->count);
-      buffer->tail = (buffer->tail + 1) % N;
-      sem_post(&(buffer->full));
-    }
-    sem_post(&(buffer->mutex));
-    sem_post(&(buffer->production));
-    sleep(1);
-  }
 }
 
 void consumer1Task(Buffer *buffer) {
@@ -112,7 +104,7 @@ void consumer1Task(Buffer *buffer) {
         sem_wait(&(buffer->mutex));
 
         if(buffer->buffer[buffer->head].lastReadBy == (id-1) ||
-              buffer->buffer[buffer->head].lastReadBy == id-1) { //Read label
+              buffer->buffer[buffer->head].lastReadBy == id) { //Read label
 
             printf("Consumer%d:\tread: %c\t[%d]\n", id, buffer->buffer[buffer->head].label,
               buffer->count);
@@ -210,10 +202,6 @@ int main(int argc, char** argv)
         exit(-1);
     }
     if((sem_init(&(buffer->mutex), 1, 1)) == -1){
-        printf("Error while initializing semaphore: %d\n", errno);
-        exit(-1);
-    }
-    if((sem_init(&(buffer->production), 1, 1)) == -1){
         printf("Error while initializing semaphore: %d\n", errno);
         exit(-1);
     }
